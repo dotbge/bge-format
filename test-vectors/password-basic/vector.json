@@ -1,0 +1,30 @@
+{
+  "name": "password-basic",
+  "format_version": 3,
+  "mode": "password",
+  "conformance": [
+    "reader",
+    "writer"
+  ],
+  "plaintext": "plaintext.bin",
+  "expected": "expected.bge",
+  "password": "correct horse battery staple",
+  "chunk_size": 67108864,
+  "metadata": {
+    "n": "hello.txt",
+    "t": "public.plain-text",
+    "s": 12
+  },
+  "metadata_json": "{\"n\":\"hello.txt\",\"s\":12,\"t\":\"public.plain-text\"}",
+  "pinned": {
+    "master_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "kdf": "pbkdf2-hmac-sha512",
+    "salt_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "iterations": 1000000,
+    "wrap_nonce_hex": "b0b1b2b3b4b5b6b7b8b9babb",
+    "metadata_nonce_hex": "c0c1c2c3c4c5c6c7c8c9cacb",
+    "chunk_nonces_hex": [
+      "d0d1d2d3d4d5d6d7d8d9dadb"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "rsa-identity-basic",
+  "format_version": 3,
+  "mode": "rsa-identity",
+  "conformance": ["reader"],
+  "plaintext": "plaintext.bin",
+  "expected": "expected.bge",
+  "private_key": "bge-test-vector_DO-NOT-USE_private.pem",
+  "public_key": "bge-test-vector_DO-NOT-USE_public.pem",
+  "key_id_hex": "998f056f32a8b792",
+  "chunk_size": 67108864,
+  "notes": [
+    "Reader-conformance only: RSA-OAEP-SHA256 uses an internal random seed, so the encrypted DEK in the header is NOT byte-reproducible. A conforming reader MUST decrypt expected.bge with the private key and recover plaintext.bin exactly.",
+    "This expected.bge was produced by the reference implementation (bge CLI).",
+    "The key pair is a throwaway, published on purpose for verification only. NEVER use it for real data — see the filename.",
+    "Metadata in this file includes original filename/type/size and creation/modification timestamps."
+  ]
+}
