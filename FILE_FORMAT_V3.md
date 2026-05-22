@@ -382,6 +382,15 @@ Total Header:       111 bytes
 - Encrypted files MUST use `.bge` extension to ensure proper UTI association with the BGE application.
 - Output filename format: `{original_filename}.bge` (e.g., `report.pdf` → `report.pdf.bge`)
 
+### 8.5 Key ID and Recipient Privacy
+
+- In RSA Identity Mode, the 8-byte **Key ID** (§3.1, §4.4) is stored in the header **in cleartext**. This is intentional: it lets a reader locate the matching private key in O(1) instead of trial-decrypting with every key.
+- Because the Key ID is a deterministic fingerprint of the recipient's public key, anyone who obtains a `.bge` file — without any key — can:
+  - **Correlate** files: identical Key IDs mean the files target the same recipient.
+  - **Identify the recipient**: given a set of known public keys (e.g. shared identity cards), an observer can compute each key's Key ID and match it against the file.
+- This does **not** weaken payload confidentiality — the contents stay encrypted. The exposure is **recipient metadata** ("who a file is encrypted for").
+- Implementations whose threat model includes recipient anonymity should account for this. Password Mode carries no Key ID and does not have this property.
+
 ---
 
 ## 9. File Overhead Analysis
