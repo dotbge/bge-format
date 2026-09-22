@@ -8,7 +8,7 @@
 | **Format** | `.bge` |
 | **Specification version** | 3.0 |
 | **Status** | Final |
-| **Updated** | 2026-02-03 |
+| **Updated** | 2026-09-22 |
 | **UTI** | `com.dotbge.encrypted` |
 | **Magic number** | `BGE3` (`0x42 0x47 0x45 0x33`) |
 | **Home** | https://dotbge.com |
@@ -28,8 +28,8 @@ BGE v3 is a secure, high-performance, hybrid encryption file format designed for
 | **UTI** | `com.dotbge.encrypted` |
 | **Magic Number** | `BGE3` (4 bytes: `0x42 0x47 0x45 0x33`) |
 | **Encryption Modes** | RSA Identity Mode + Password Mode |
-| **Metadata** | Encrypted metadata block (filename, type, dimensions) |
-| **Streaming** | Constant memory usage (~64MB) regardless of file size |
+| **Metadata** | Encrypted metadata block (filename, type, dimensions, timestamps, thumbnail) |
+| **Streaming** | Memory bounded by one chunk (4 MB by default) regardless of file size |
 | **Random Access** | Supports seeking within encrypted files |
 
 ### Version Comparison
@@ -37,7 +37,7 @@ BGE v3 is a secure, high-performance, hybrid encryption file format designed for
 | Feature | v1 | v2 | v3 |
 |---------|-----|-----|-----|
 | **Magic Number** | None | `0x02` (1 byte) | `BGE3` (4 bytes) |
-| **Memory Usage** | Entire file | Constant ~80MB | Constant ~64MB |
+| **Memory Usage** | Entire file | Constant ~80MB | One chunk (1–256 MB, default 4 MB) |
 | **Encryption Mode** | RSA only | RSA only | RSA + Password |
 | **Key ID** | None | None | 8 bytes (fast key lookup) |
 | **Metadata Block** | None | None | Encrypted JSON |
@@ -95,7 +95,7 @@ Used for secure sharing between users using asymmetric Public/Private key pairs.
 
 | Relative Offset | Size | Type | Description |
 |-----------------|------|------|-------------|
-| +0 | 8 | `byte[8]` | **Key ID**: First 8 bytes of `SHA256(SPKI_DER_Encoded_Public_Key)`<br>Used to quickly identify which private key to use for decryption. |
+| +0 | 8 | `byte[8]` | **Key ID**: First 8 bytes of `SHA256(PKCS1_DER_Encoded_RSA_Public_Key)` (§4.4)<br>Used to quickly identify which private key to use for decryption. |
 | +8 | 4 | `uint32` | **Cipher Length (N)**: Length of RSA ciphertext (typically 512 for RSA-4096) |
 | +12 | N | `binary` | **RSA Ciphertext**: Master Key (DEK) encrypted via RSA-OAEP-SHA256 |
 
@@ -118,9 +118,9 @@ This section immediately follows the mode-specific authentication data.
 
 | Relative Offset | Size | Type | Description |
 |-----------------|------|------|-------------|
-| +0 | 8 | `int64` | **Chunk Size**: Bytes per chunk (default: 67,108,864 = 64MB) |
+| +0 | 8 | `int64` | **Chunk Size**: Plaintext bytes per chunk, 1 MiB–256 MiB (§5). Writers default to 4,194,304 (4 MiB); files written before 2026-09 use 67,108,864 (64 MiB) |
 | +8 | 8 | `int64` | **Original File Size**: Size of original unencrypted file |
-| +16 | 4 | `uint32` | **Chunk Count**: Total number of encrypted chunks |
+| +16 | 4 | `uint32` | **Chunk Count**: `ceil(Original File Size / Chunk Size)`; 0 for an empty file |
 
 ### 3.2 Encrypted Metadata Block
 
@@ -129,13 +129,13 @@ This block stores file attributes for Finder Preview / QuickLook integration. It
 | Order | Size | Type | Description |
 |-------|------|------|-------------|
 | 1 | 12 | `byte[12]` | **Block Nonce**: Unique AES-GCM IV for metadata encryption |
-| 2 | 4 | `uint32` | **JSON Length (L)**: Size of the encrypted JSON blob |
+| 2 | 4 | `uint32` | **JSON Length (L)**: Size of the encrypted JSON blob, excluding the tag (equal to the plaintext JSON length) |
 | 3 | L | `binary` | **Encrypted JSON**: AES-GCM ciphertext of metadata |
 | 4 | 16 | `byte[16]` | **Auth Tag**: GCM integrity check tag |
 
 #### Metadata JSON Schema
 
-Keys are abbreviated to minimize storage overhead:
+The plaintext is a UTF-8 JSON object. Keys are abbreviated to minimize storage overhead:
 
 ```json
 {
@@ -144,14 +144,47 @@ Keys are abbreviated to minimize storage overhead:
   "s": 10485760,                   // File Size in bytes (Optional)
   "w": 1920,                       // Width in pixels (Optional, for images/video)
   "h": 1080,                       // Height in pixels (Optional)
-  "d": 120.5                       // Duration in seconds (Optional, for audio/video)
+  "d": 120.5,                      // Duration in seconds (Optional, for audio/video)
+  "c": 1710000000.0,               // Creation date, Unix seconds (Optional)
+  "m": 1710000000.0,               // Modification date, Unix seconds (Optional)
+  "b": "/9j/4AAQSkZJRg…",          // Thumbnail, base64 JPEG (Optional)
+  "a": "bge-folder",               // Archive kind (Optional)
+  "p": "Photos/2024/Trip"          // Original folder path (Optional)
 }
 ```
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `n` | string | Original filename. The `.bge` file's own name may differ (§8.4); a reader names its output from `n` |
+| `t` | string | UTI, or MIME type, of the content. May carry parameters after `;` (see *Encrypted messages*) |
+| `s` | integer | Original file size in bytes |
+| `w`, `h` | integer | Pixel dimensions of an image or video |
+| `d` | number | Duration of audio or video, in seconds |
+| `c`, `m` | number | Creation and modification dates of the original file, as Unix seconds. A reader may restore them on the decrypted file |
+| `b` | string | Standard base64 of a JPEG thumbnail, about 200×200 px. Writers drop it when the JSON would exceed the maximum length |
+| `a` | string | Archive kind. `"bge-folder"`: the payload is a ZIP archive the writer made from a folder or from several files, and `n` ends in `.zip` |
+| `p` | string | Original folder path (see *Original folder path*) |
 
 **Requirements:**
 - Metadata Block is **MANDATORY** in v3 format
 - If no metadata is available, use minimal JSON: `{"n":"","t":""}`
 - Maximum JSON Length: 65,536 bytes (64KB)
+- Readers MUST ignore keys they do not know. Writers add optional keys without a format version change
+- Every value comes from whoever wrote the file and is untrusted (§8.6)
+
+The reference writer encodes the JSON with sorted keys and no whitespace. Readers must not depend on key order.
+
+#### Encrypted messages
+
+A short text message travels as an ordinary `.bge` file whose payload is the UTF-8 text. Its `t` is `public.plain-text; dotbge-kind=message`, and `s` is the text's length in UTF-8 bytes. A reader that finds the `dotbge-kind=message` parameter on a plain-text type may show the text as a message instead of offering a file. Readers that ignore the parameter still see a plain-text file.
+
+#### Original folder path
+
+`p` is written when a folder is encrypted file by file and the output hides folder names, each folder being replaced by a pseudonym, one for one. It lists the folders the file was in, from the encrypted folder's own name down to the file's parent, `/`-separated, Unicode NFC. The filename stays in `n`. It is absent otherwise.
+
+A reader decrypting a folder restores names from it: if the `.bge` sits `k` folders below the folder being decrypted, those `k` folders take the last `k` components of `p`, and folders deeper than `p` records keep their names. When `k` is less than the number of components, the folder being decrypted was itself named by the component just before them.
+
+`p` is untrusted input. A reader sanitizes each component as it does `n` (§8.6), and ignores the whole path if any component is empty, `.` or `..`.
 
 ### 3.3 Content Payload (Chunks)
 
@@ -165,9 +198,9 @@ The file content is split into fixed-size chunks. Each chunk is independently en
 | Ciphertext | Variable | Encrypted data (chunk size or remainder for last chunk) |
 | Tag | 16 bytes | AES-GCM authentication tag |
 
-**Algorithm:** AES-256-GCM using Master Key (DEK) + per-chunk random nonce.
+**Algorithm:** AES-256-GCM using Master Key (DEK) + per-chunk random nonce. No additional authenticated data is used, here or in the metadata block and password key wrap.
 
-**Last Chunk:** May be smaller than the configured chunk size.
+**Last Chunk:** Holds the remainder, `Original File Size − (Chunk Count − 1) × Chunk Size` bytes; every other chunk holds exactly Chunk Size bytes.
 
 ---
 
@@ -208,28 +241,30 @@ All cryptographic operations comply with US Export Regulations (Mass Market) and
 The Key ID enables fast private key lookup without attempting decryption:
 
 ```
-Key ID = SHA256(SPKI_DER)[0:8]
+Key ID = SHA256(PKCS1_DER)[0:8]
 
 Where:
-  SPKI_DER = SubjectPublicKeyInfo DER encoding of the RSA public key
-  [0:8]    = First 8 bytes of the hash
+  PKCS1_DER = PKCS#1 RSAPublicKey DER encoding (SEQUENCE of modulus and exponent)
+  [0:8]     = First 8 bytes of the hash
 ```
+
+Hash the bare `RSAPublicKey` structure, not a `SubjectPublicKeyInfo` wrapping it: the wrapper changes the hash. A key supplied as SPKI (a PEM labelled `PUBLIC KEY`) is unwrapped to PKCS#1 first. The `rsa-identity-basic` test vector checks this.
+
+> **Correction (2026-09-22):** revisions of this document before 2026-09-22 said `SHA256(SPKI_DER)`. That was an error: every reference implementation, and the test vector published with those revisions, hash PKCS#1. A reader may also accept `SHA256(SPKI_DER)[0:8]` when matching keys, to read files from writers built on the earlier text; writers MUST use PKCS#1.
 
 ---
 
-## 5. Chunk Size Recommendations
+## 5. Chunk Size
 
-The default chunk size is 64MB, but different content types may benefit from different sizes:
+A chunk is the unit a reader has to hold: its GCM tag covers the whole chunk, so none of it can be used until all of it is decrypted. The chunk size therefore bounds a reader's memory, and how much it must decrypt to seek to any byte, such as a video player reading an encrypted file as it plays. Smaller chunks cost 28 bytes of overhead each (§9).
 
-| Content Type | UTI Pattern | Recommended Chunk Size | Rationale |
-|--------------|-------------|------------------------|-----------|
-| **Video** | `public.movie`, `public.video` | 8 MB | Optimizes seeking performance |
-| **Audio** | `public.audio` | 4 MB | Fast seek for playback |
-| **Images** | `public.image` | 16 MB | Balance between memory and I/O |
-| **Documents** | `public.data`, `public.content` | 64 MB (default) | Maximum throughput |
-| **Large Archives** | `public.archive` | 64 MB | Maximum throughput |
+| | Value |
+|---|---|
+| **Allowed range** | 1 MiB (1,048,576) to 256 MiB (268,435,456). Writers MUST stay within it; readers MAY reject files outside it |
+| **Default** | 4 MiB (4,194,304), for all content types |
+| **Earlier default** | 64 MiB (67,108,864), used by files written before 2026-09 |
 
-**Implementation Note:** The chunk size is stored in the header, so readers always use the file's configured value regardless of content type.
+The chunk size is stored in the header, so readers always use the file's value: files written with any valid size stay readable.
 
 ---
 
@@ -377,10 +412,11 @@ Total Header:       111 bytes
 - If any chunk fails authentication (GCM tag mismatch), the entire file is considered **corrupted**.
 - Partial decryption is NOT supported - treat authentication failures as complete failures.
 
-### 8.4 File Extension
+### 8.4 File Extension and Name
 
 - Encrypted files MUST use `.bge` extension to ensure proper UTI association with the BGE application.
-- Output filename format: `{original_filename}.bge` (e.g., `report.pdf` → `report.pdf.bge`)
+- Output filename format: `{original_filename}.bge` (e.g., `report.pdf` → `report.pdf.bge`). A writer MAY instead give the file an opaque name, so that the original name is not visible without the key, e.g. `k3j2x7…q4.bge`.
+- A reader takes the original name from the metadata `n`, never by stripping `.bge` from the file's name.
 
 ### 8.5 Key ID and Recipient Privacy
 
@@ -390,6 +426,15 @@ Total Header:       111 bytes
   - **Identify the recipient**: given a set of known public keys (e.g. shared identity cards), an observer can compute each key's Key ID and match it against the file.
 - This does **not** weaken payload confidentiality — the contents stay encrypted. The exposure is **recipient metadata** ("who a file is encrypted for").
 - Implementations whose threat model includes recipient anonymity should account for this. Password Mode carries no Key ID and does not have this property.
+
+### 8.6 Untrusted Metadata
+
+The metadata authenticates as coming from someone who could encrypt to the recipient, which in RSA Identity Mode is anyone holding the recipient's public key. Treat every value as untrusted input:
+
+- **Filename (`n`)**: turn it into one safe path component before use. Take only the part after the last `/` or `\`; replace control characters and `:`; reject empty, `.` and `..`, falling back to a name of the reader's choosing; limit the length.
+- **Folder path (`p`)**: sanitize each component the same way, and ignore the whole path if any component is empty, `.` or `..` (§3.2).
+- **Archives (`a` = `"bge-folder"`)**: when extracting the ZIP, reject entries whose paths are absolute, contain `..`, or otherwise resolve outside the destination, and do not follow symbolic links out of it.
+- **Sizes**: do not preallocate from `s`, `w`, `h` or the header's sizes without bounds.
 
 ---
 
@@ -407,17 +452,19 @@ Per-Chunk Overhead:
   12 (nonce) + 16 (tag) = 28 bytes per chunk
 ```
 
-### Example: 1GB File with 64MB Chunks
+### Example: 1GB File with 4MB Chunks (default)
 
 ```
 File Size:        1,073,741,824 bytes (1 GB)
-Chunks:           16 (each 64MB, except last)
+Chunks:           256 (each 4MB)
 Header (RSA):     550 bytes
 Metadata (~100B): 132 bytes
-Chunk Overhead:   16 × 28 = 448 bytes
+Chunk Overhead:   256 × 28 = 7,168 bytes
 ────────────────────────────────────────
-Total Overhead:   1,130 bytes (0.0001%)
+Total Overhead:   7,850 bytes (0.0007%)
 ```
+
+With the earlier 64MB default the same file has 16 chunks and 1,130 bytes of overhead (0.0001%). A thumbnail in the metadata typically adds 5–20 KB.
 
 ---
 
@@ -455,7 +502,7 @@ public enum BGEFormatV3 {
     public static let gcmNonceSize = 12
 
     // Defaults
-    public static let defaultChunkSize: Int64 = 64 * 1024 * 1024  // 64 MB
+    public static let defaultChunkSize: Int64 = 4 * 1024 * 1024   // 4 MB (64 MB before 2026-09)
     public static let defaultIterations: UInt32 = 1_000_000
     public static let maxMetadataSize: UInt32 = 65_536  // 64 KB
 
@@ -485,6 +532,13 @@ public enum BGEFormatV3 {
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.0 | 2026-09-22 | Document revision; the on-disk format is unchanged |
+| | | - Corrected Key ID input: PKCS#1 `RSAPublicKey` DER, not SPKI (§4.4) |
+| | | - Default chunk size 4 MiB (was 64 MiB); stated the 1–256 MiB range (§5) |
+| | | - Documented metadata keys `c`, `m`, `b`, `a`; added `p` (original folder path) |
+| | | - Documented the encrypted-message marker in `t` |
+| | | - Readers ignore unknown metadata keys; `.bge` names may be opaque (§8.4) |
+| | | - Added §8.6 Untrusted Metadata |
 | 3.0 | 2026-02-03 | Initial v3 specification |
 | | | - Added Password Mode support |
 | | | - Added Key ID for fast key lookup |
@@ -496,7 +550,7 @@ public enum BGEFormatV3 {
 
 ---
 
-**Specification document revision:** 2026-02-03
+**Specification document revision:** 2026-09-22
 **Maintained by:** dotbge — https://dotbge.com
 **Implementations & apps:** https://dotbge.app
 **License:** CC BY 4.0 — the format is free to implement (see [`LICENSE`](LICENSE))

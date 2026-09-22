@@ -78,6 +78,11 @@ RSA-identity vectors instead carry the published throwaway key pair
 (`bge-test-vector_DO-NOT-USE_*.pem`) and the 8-byte `key_id_hex`; they have no
 `pinned` block (see the OAEP note above).
 
+The vectors were written with the earlier 64 MiB default chunk size
+(`"chunk_size": 67108864`). They stay valid, since readers take the chunk size
+from the header; a writer reproducing a password vector must use the vector's
+`chunk_size`, not its own default (4 MiB since 2026-09).
+
 The encrypted **metadata** JSON uses sorted keys and compact separators
 (`{"h":1080,"n":"photo.jpg",…}`), matching the reference encoder — relevant when
 reproducing password vectors byte-for-byte.
