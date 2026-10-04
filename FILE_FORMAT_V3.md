@@ -236,6 +236,13 @@ All cryptographic operations comply with US Export Regulations (Mass Market) and
 
 > **Note:** Iterations value is stored in the file header. Readers MUST use the stored value, not the default.
 
+**Password text encoding clarification (2026-09):** Before PBKDF2, a writer MUST
+normalize the user's Unicode password to NFC and then encode it as UTF-8, with
+no BOM or NUL terminator. Readers MUST use the same rule for newly written
+files. Earlier BGE3 implementations used unnormalized UTF-8; to retain access
+to those files, a reader SHOULD retry the literal UTF-8 input after an NFC
+unwrap failure, and MAY retry its NFD form. No new on-disk field is introduced.
+
 ### 4.4 Key ID Calculation
 
 The Key ID enables fast private key lookup without attempting decryption:

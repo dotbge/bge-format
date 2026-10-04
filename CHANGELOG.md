@@ -28,6 +28,10 @@ Format v3.0, unchanged on disk: every file valid before is valid after.
 - **Security**: added §8.6 on treating metadata as untrusted (filename and path
   sanitizing, safe ZIP extraction). Stated that no AES-GCM operation uses
   additional authenticated data.
+- **Password text** (§4.3): writers normalize the password to NFC, then encode
+  it as UTF-8, with no BOM or NUL terminator. Earlier implementations used the
+  UTF-8 of the password as typed, so readers retry that after an NFC failure,
+  and may retry its NFD form.
 
 ## Format v3.0 — 2026-02-03
 
